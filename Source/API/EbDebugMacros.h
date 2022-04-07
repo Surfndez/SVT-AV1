@@ -34,7 +34,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
-
+#define RC_REFACTOR_1           1 // gf group refactoring
+#define RC_REFACTOR_2           1 // remove refresh_frame_flags
 //FOR DEBUGGING - Do not remove
 #define LOG_ENC_DONE            0 // log encoder job one
 #define NO_ENCDEC               0 // bypass encDec to test cmpliance of MD. complained achieved when skip_flag is OFF. Port sample code from VCI-SW_AV1_Candidate1 branch

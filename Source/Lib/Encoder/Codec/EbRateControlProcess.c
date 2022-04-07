@@ -1419,16 +1419,27 @@ static int get_active_best_quality(PictureControlSet *pcs_ptr, const int active_
     const enum aom_rc_mode rc_mode            = encode_context_ptr->rc_cfg.mode;
     GF_GROUP *const        gf_group           = &encode_context_ptr->gf_group;
     const int              bit_depth          = scs_ptr->static_config.encoder_bit_depth;
+#if !RC_REFACTOR_2
     //int rf_level, update_type;
     const RefreshFrameFlagsInfo *const refresh_frame_flags =
         &pcs_ptr->parent_pcs_ptr->refresh_frame;
+#endif
+#if RC_REFACTOR_1
+    const int is_intrl_arf_boost = pcs_ptr->parent_pcs_ptr->update_type == INTNL_ARF_UPDATE;
+#else
     const int is_intrl_arf_boost = gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] ==
         INTNL_ARF_UPDATE;
+#endif
     int *inter_minq;
     ASSIGN_MINQ_TABLE(bit_depth, inter_minq);
     int       active_best_quality = 0;
-    const int is_leaf_frame       = !(refresh_frame_flags->golden_frame ||
-                                refresh_frame_flags->alt_ref_frame || is_intrl_arf_boost);
+#if RC_REFACTOR_2
+    const int is_leaf_frame = !(pcs_ptr->parent_pcs_ptr->update_type == GF_UPDATE ||
+        pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE || is_intrl_arf_boost);
+#else
+    const int is_leaf_frame = !(refresh_frame_flags->golden_frame ||
+        refresh_frame_flags->alt_ref_frame || is_intrl_arf_boost);
+#endif
     const int is_overlay_frame    = pcs_ptr->parent_pcs_ptr->is_overlay;
 
     if (is_leaf_frame || is_overlay_frame) {
@@ -1468,7 +1479,9 @@ static double get_rate_correction_factor(PictureParentControlSet *ppcs_ptr) {
     SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
     EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
     RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
+#if !RC_REFACTOR_2
     const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
+#endif
     double                             rcf;
 
     if (ppcs_ptr->frm_hdr.frame_type == KEY_FRAME) {
@@ -1477,7 +1490,11 @@ static double get_rate_correction_factor(PictureParentControlSet *ppcs_ptr) {
         const rate_factor_level rf_lvl = ppcs_ptr->temporal_layer_index + 1;
         rcf                            = rc->rate_correction_factors[rf_lvl];
     } else {
+#if RC_REFACTOR_2
+        if ((ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE) &&
+#else
         if ((refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame) &&
+#endif
             !ppcs_ptr->is_overlay &&
             (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
              encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
@@ -1493,7 +1510,9 @@ static void set_rate_correction_factor(PictureParentControlSet *ppcs_ptr, double
     SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
     EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
     RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
+#if !RC_REFACTOR_2
     const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
+#endif
 
     // Normalize RCF to account for the size-dependent scaling factor.
     //factor /= resize_rate_factor(&cpi->oxcf.frm_dim_cfg, width, height);
@@ -1506,7 +1525,11 @@ static void set_rate_correction_factor(PictureParentControlSet *ppcs_ptr, double
         const rate_factor_level rf_lvl      = ppcs_ptr->temporal_layer_index + 1;
         rc->rate_correction_factors[rf_lvl] = factor;
     } else {
+#if RC_REFACTOR_2
+        if ((ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE) &&
+#else
         if ((refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame) &&
+#endif
             !ppcs_ptr->is_overlay &&
             (encode_context_ptr->rc_cfg.mode != AOM_CBR ||
              encode_context_ptr->rc_cfg.gf_cbr_boost_pct > 20))
@@ -1587,7 +1610,9 @@ static int adjust_q_cbr(PictureParentControlSet *ppcs_ptr, int q) {
     SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
     EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
     RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
+#if !RC_REFACTOR_2
     const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
+#endif
     const int max_delta                  = max_delta_per_layer[ppcs_ptr->temporal_layer_index] / 2;
     const int change_avg_frame_bandwidth = abs(rc->avg_frame_bandwidth -
                                                rc->prev_avg_frame_bandwidth) >
@@ -1599,7 +1624,11 @@ static int adjust_q_cbr(PictureParentControlSet *ppcs_ptr, int q) {
     if (ppcs_ptr->frm_hdr.frame_type != KEY_FRAME && /*!cpi->use_svc &&*/
         rc->frames_since_key > 1 && !change_target_bits_mb &&
         (!encode_context_ptr->rc_cfg.gf_cbr_boost_pct ||
+#if RC_REFACTOR_2
+        !(ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE))) {
+#else
          !(refresh_frame_flags->alt_ref_frame || refresh_frame_flags->golden_frame))) {
+#endif
         // Make sure q is between oscillating Qs to prevent resonance.
         // Limit the decrease in Q from previous frame.
         if (rc->q_1_frame - q > max_delta)
@@ -1799,7 +1828,9 @@ static int rc_pick_q_and_bounds_no_stats_cbr(PictureControlSet *pcs_ptr) {
     SequenceControlSet *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL       *rc                 = &encode_context_ptr->rc;
+#if !RC_REFACTOR_1
     GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
+#endif
     int                 q;
     const int           bit_depth = scs_ptr->static_config.encoder_bit_depth;
     const int           width     = pcs_ptr->parent_pcs_ptr->av1_cm->frm_size.frame_width;
@@ -1859,8 +1890,11 @@ static int rc_pick_q_and_bounds_no_stats_cbr(PictureControlSet *pcs_ptr) {
     assert(pcs_ptr->parent_pcs_ptr->bottom_index <= rc->worst_quality &&
            pcs_ptr->parent_pcs_ptr->bottom_index >= rc->best_quality);
     assert(q <= rc->worst_quality && q >= rc->best_quality);
-
+#if RC_REFACTOR_1
+    if (pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE)
+#else
     if (gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] == ARF_UPDATE)
+#endif
         rc->arf_q = q;
     return q;
 }
@@ -1875,13 +1909,19 @@ static int rc_pick_q_and_bounds(PictureControlSet *pcs_ptr) {
     EncodeContext                     *encode_context_ptr = scs_ptr->encode_context_ptr;
     RATE_CONTROL                      *rc                 = &encode_context_ptr->rc;
     GF_GROUP *const                    gf_group           = &encode_context_ptr->gf_group;
+#if !RC_REFACTOR_2
     const RefreshFrameFlagsInfo *const refresh_frame_flags =
         &pcs_ptr->parent_pcs_ptr->refresh_frame;
+#endif
     int active_best_quality  = 0;
     int active_worst_quality = rc->active_worst_quality;
     int q;
+#if RC_REFACTOR_1
+    int is_intrl_arf_boost = pcs_ptr->parent_pcs_ptr->update_type == INTNL_ARF_UPDATE;
+#else
     int is_intrl_arf_boost = gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] ==
         INTNL_ARF_UPDATE;
+#endif
 
     if (frame_is_intra_only(pcs_ptr->parent_pcs_ptr)) {
         const int is_fwd_kf = pcs_ptr->parent_pcs_ptr->frm_hdr.frame_type == KEY_FRAME &&
@@ -1902,8 +1942,13 @@ static int rc_pick_q_and_bounds(PictureControlSet *pcs_ptr) {
         // leaf (non arf) frames. This is important to the TPL model which assumes
         // Q drops with each arf level.
         if (!(pcs_ptr->parent_pcs_ptr->is_overlay) &&
+#if RC_REFACTOR_2
+            (pcs_ptr->parent_pcs_ptr->update_type == GF_UPDATE || pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE
+                || is_intrl_arf_boost)) {
+#else
             (refresh_frame_flags->golden_frame || refresh_frame_flags->alt_ref_frame ||
              is_intrl_arf_boost)) {
+#endif
             active_worst_quality = (active_best_quality + (3 * active_worst_quality) + 2) / 4;
         }
     }
@@ -1926,8 +1971,11 @@ static int rc_pick_q_and_bounds(PictureControlSet *pcs_ptr) {
            pcs_ptr->parent_pcs_ptr->bottom_index >= rc->best_quality);
 
     assert(q <= rc->worst_quality && q >= rc->best_quality);
-
+#if RC_REFACTOR_1
+    if (pcs_ptr->parent_pcs_ptr->update_type == ARF_UPDATE)
+#else
     if (gf_group->update_type[pcs_ptr->parent_pcs_ptr->gf_group_index] == ARF_UPDATE)
+#endif
         rc->arf_q = q;
 
     return q;
@@ -2044,16 +2092,23 @@ static void update_buffer_level(PictureParentControlSet *ppcs_ptr, int encoded_f
 }
 
 static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
+#if !RC_REFACTOR_2
     const RefreshFrameFlagsInfo *const refresh_frame_flags = &ppcs_ptr->refresh_frame;
+#endif
     SequenceControlSet                *scs_ptr             = ppcs_ptr->scs_ptr;
     EncodeContext                     *encode_context_ptr  = scs_ptr->encode_context_ptr;
     RATE_CONTROL                      *rc                  = &encode_context_ptr->rc;
+#if !RC_REFACTOR_1
     GF_GROUP *const                    gf_group            = &encode_context_ptr->gf_group;
+#endif
     FrameHeader                       *frm_hdr             = &ppcs_ptr->frm_hdr;
     const int                          width               = ppcs_ptr->av1_cm->frm_size.frame_width;
     const int                          height = ppcs_ptr->av1_cm->frm_size.frame_height;
-
+#if RC_REFACTOR_1
+    const int is_intrnl_arf = ppcs_ptr->update_type == INTNL_ARF_UPDATE;
+#else
     const int is_intrnl_arf = gf_group->update_type[ppcs_ptr->gf_group_index] == INTNL_ARF_UPDATE;
+#endif
 
     const int qindex = frm_hdr->quantization_params.base_q_idx;
 
@@ -2074,8 +2129,12 @@ static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
         encode_context_ptr->frame_updated++;
         svt_release_mutex(encode_context_ptr->frame_updated_mutex);
         if ((!ppcs_ptr->is_overlay &&
-             !(refresh_frame_flags->golden_frame || is_intrnl_arf ||
-               refresh_frame_flags->alt_ref_frame))) {
+#if RC_REFACTOR_2
+            !(ppcs_ptr->update_type == GF_UPDATE || ppcs_ptr->update_type == ARF_UPDATE || is_intrnl_arf))) {
+#else
+            !(refresh_frame_flags->golden_frame || is_intrnl_arf ||
+                refresh_frame_flags->alt_ref_frame))) {
+#endif
             rc->avg_frame_qindex[INTER_FRAME] = ROUND_POWER_OF_TWO(
                 3 * rc->avg_frame_qindex[INTER_FRAME] + qindex, 2);
         }
@@ -2088,8 +2147,13 @@ static void av1_rc_postencode_update(PictureParentControlSet *ppcs_ptr) {
     // This is used to help set quality in forced key frames to reduce popping
     if ((qindex < rc->last_boosted_qindex) || (frm_hdr->frame_type == KEY_FRAME) ||
         (!rc->constrained_gf_group &&
+#if RC_REFACTOR_2
+        (ppcs_ptr->update_type == ARF_UPDATE || is_intrnl_arf || 
+          (ppcs_ptr->update_type == GF_UPDATE && !ppcs_ptr->is_overlay)))) {
+#else
          (refresh_frame_flags->alt_ref_frame || is_intrnl_arf ||
           (refresh_frame_flags->golden_frame && !ppcs_ptr->is_overlay)))) {
+#endif
         rc->last_boosted_qindex = qindex;
     }
     update_buffer_level(ppcs_ptr, ppcs_ptr->projected_frame_size);
@@ -2168,6 +2232,7 @@ static void vbr_rate_correction(PictureControlSet *pcs_ptr, int *this_frame_targ
         rc->vbr_bits_off_target_fast -= fast_extra_bits;
     }
 }
+#if !RC_REFACTOR_2
 static INLINE void set_refresh_frame_flags(RefreshFrameFlagsInfo *const refresh_frame_flags,
                                            bool refresh_gf, bool refresh_bwdref, bool refresh_arf) {
     refresh_frame_flags->golden_frame  = refresh_gf;
@@ -2208,6 +2273,7 @@ static void av1_configure_buffer_updates(PictureControlSet           *pcs_ptr,
     if (force_refresh_all)
         set_refresh_frame_flags(refresh_frame_flags, true, true, true);
 }
+#endif
 static void av1_set_target_rate(PictureControlSet *pcs_ptr) {
     SequenceControlSet         *scs_ptr            = pcs_ptr->parent_pcs_ptr->scs_ptr;
     EncodeContext              *encode_context_ptr = scs_ptr->encode_context_ptr;
@@ -2302,7 +2368,9 @@ static void capped_crf_reencode(PictureParentControlSet *ppcs_ptr, int *const q)
 
     if (ppcs_ptr->temporal_layer_index == 0 && ppcs_ptr->slice_type != 2) {
         ppcs_ptr->gf_group_index                                                    = 1;
+#if 1 //!RC_REFACTOR_1 //? anaghdin, to check
         scs_ptr->encode_context_ptr->gf_group.update_type[ppcs_ptr->gf_group_index] = 6;
+#endif
     }
     uint32_t frame_rate   = ((scs_ptr->frame_rate + (1 << (RC_PRECISION - 1))) >> RC_PRECISION);
     int      frames_in_sw = (int)rc->rate_average_periodin_frames;
@@ -2763,7 +2831,9 @@ static void store_gf_group_param(PictureParentControlSet *ppcs_ptr) {
             ppcs_ptr->gf_group[frame_idx]->gf_group_index = gf_group_index;
             ppcs_ptr->gf_group[frame_idx]->gf_group_size  = MAX(gf_group->size,
                                                                ppcs_ptr->gf_interval);
+#if !RC_REFACTOR_1
             ppcs_ptr->gf_group[frame_idx]->update_type    = gf_group->update_type[gf_group_index];
+#endif
             ppcs_ptr->gf_group[frame_idx]->layer_depth    = gf_group->layer_depth[gf_group_index];
             ppcs_ptr->gf_group[frame_idx]->base_frame_target =
                 gf_group->bit_allocation[gf_group_index];
@@ -3013,8 +3083,10 @@ void *rate_control_kernel(void *input_ptr) {
                             one_pass_rt_rate_alloc(pcs_ptr->parent_pcs_ptr);
                         else
                             process_rc_stat(pcs_ptr->parent_pcs_ptr);
+#if !RC_REFACTOR_2
                         av1_configure_buffer_updates(
                             pcs_ptr, &(pcs_ptr->parent_pcs_ptr->refresh_frame), 0);
+#endif
                         av1_set_target_rate(pcs_ptr);
                         store_param(pcs_ptr->parent_pcs_ptr, rate_control_param_ptr);
                     }
@@ -3122,8 +3194,12 @@ void *rate_control_kernel(void *input_ptr) {
                 } else {
                     // ***Rate Control***
                     int32_t new_qindex;
+#if RC_REFACTOR_1
+                    int32_t update_type = pcs_ptr->parent_pcs_ptr->update_type;
+#else
                     int32_t update_type = scs_ptr->encode_context_ptr->gf_group
                                               .update_type[pcs_ptr->parent_pcs_ptr->gf_group_index];
+#endif
 
                     if (pcs_ptr->parent_pcs_ptr->tpl_ctrls.enable &&
                         pcs_ptr->parent_pcs_ptr->r0 != 0 &&

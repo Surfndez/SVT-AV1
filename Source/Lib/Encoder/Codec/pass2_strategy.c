@@ -1999,12 +1999,17 @@ void find_init_qp_middle_pass(SequenceControlSet *scs_ptr, PictureParentControlS
     }
 }
 int frame_is_kf_gf_arf(PictureParentControlSet *ppcs_ptr) {
+#if RC_REFACTOR_1
+    return frame_is_intra_only(ppcs_ptr) || ppcs_ptr->update_type == ARF_UPDATE
+        || ppcs_ptr->update_type == GF_UPDATE;
+#else
     SequenceControlSet *scs_ptr            = ppcs_ptr->scs_ptr;
     EncodeContext      *encode_context_ptr = scs_ptr->encode_context_ptr;
     GF_GROUP *const     gf_group           = &encode_context_ptr->gf_group;
     const int           update_type        = gf_group->update_type[ppcs_ptr->gf_group_index];
 
     return frame_is_intra_only(ppcs_ptr) || update_type == ARF_UPDATE || update_type == GF_UPDATE;
+#endif
 }
 void svt_av1_twopass_postencode_update(PictureParentControlSet *ppcs_ptr) {
     SequenceControlSet         *scs_ptr            = ppcs_ptr->scs_ptr;
